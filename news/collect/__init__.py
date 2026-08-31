@@ -42,11 +42,30 @@ def state_of(db: DB, source_id: str) -> dict:
     return db.one("SELECT * FROM sources_state WHERE id = ?", (source_id,)) or {"id": source_id}
 
 
+_weight_cache: dict[str, float] | None = None
+
+
+def weights(db: DB) -> dict[str, float]:
+    """Веса всех источников одним запросом: на удалённой БД поштучные не окупаются."""
+    global _weight_cache
+    if _weight_cache is None:
+        _weight_cache = {
+            row["id"]: float(row["weight"])
+            for row in db.query("SELECT id, weight FROM sources_state WHERE weight IS NOT NULL")
+        }
+    return _weight_cache
+
+
+def reset_weight_cache() -> None:
+    global _weight_cache
+    _weight_cache = None
+
+
 def effective_weight(db: DB, src: Source) -> float:
-    row = db.one("SELECT weight FROM sources_state WHERE id = ?", (src.id,))
-    if row and row.get("weight") is not None:
-        return float(row["weight"])
-    return float(src.weight)
+    if src is None:
+        return 0.5
+    tuned = weights(db).get(src.id)
+    return float(tuned) if tuned is not None else float(src.weight)
 
 
 def is_due(src: Source, state: dict, now) -> bool:
@@ -68,19 +87,12 @@ def store_post(db: DB, src: Source, raw: RawPost) -> str:
     if age_hours < -6:  # источник с кривой таймзоной
         raw.published_at = util.now_utc()
 
-    exists = db.one(
-        "SELECT id FROM posts WHERE source_id = ? AND external_id = ?",
-        (src.id, raw.external_id),
-    )
-    if exists:
-        return "dup"
-
     title = raw.title or ""
     text = raw.text or ""
     keep, reason, geo = filters.classify(src, title, text)
     blob = f"{title}\n{text}"
 
-    db.execute(
+    written = db.execute_count(
         """INSERT INTO posts (source_id, external_id, title, text, url, publisher, lang,
                               section, published_at, fetched_at, simhash, entities,
                               channel, geo, dropped, drop_reason)
@@ -94,6 +106,8 @@ def store_post(db: DB, src: Source, raw: RawPost) -> str:
             src.channel, dumps(geo), 0 if keep else 1, reason,
         ),
     )
+    if not written:
+        return "dup"
     return "new" if keep else f"dropped:{reason}"
 
 
@@ -123,6 +137,9 @@ def collect_all(db: DB, *, only: list[str] | None = None, force: bool = False) -
     for source_id, src in catalog.items():
         if only and source_id not in only:
             continue
+        if util.out_of_time(reserve=150):
+            stats["errors"].append("сбор прерван по времени, продолжится следующим прогоном")
+            break
         state = state_of(db, source_id)
         if not force:
             if not state.get("active", 1):

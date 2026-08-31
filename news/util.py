@@ -4,10 +4,23 @@ from __future__ import annotations
 import hashlib
 import html
 import re
+import time
 import unicodedata
 from datetime import datetime, timedelta, timezone
 
 MSK = timezone(timedelta(hours=3))
+
+_deadline: float | None = None
+
+
+def set_deadline(seconds: float) -> None:
+    """Сколько времени отведено прогону: запуск по расписанию не должен обрываться."""
+    global _deadline
+    _deadline = time.monotonic() + seconds
+
+
+def out_of_time(reserve: float = 0) -> bool:
+    return _deadline is not None and time.monotonic() > _deadline - reserve
 
 _TAG_RE = re.compile(r"<[^>]+>")
 _WS_RE = re.compile(r"[ \t ]+")

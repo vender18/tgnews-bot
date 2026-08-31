@@ -69,10 +69,24 @@ def cluster_posts(db: DB, cluster_id: int) -> list[dict]:
         "SELECT * FROM posts WHERE cluster_id = ? ORDER BY published_at ASC", (cluster_id,))
 
 
-def recompute(db: DB, cluster_id: int) -> dict | None:
-    posts = cluster_posts(db, cluster_id)
-    if not posts:
-        return None
+def posts_of(db: DB, cluster_ids: list[int]) -> dict[int, list[dict]]:
+    """Посты сразу многих кластеров: один запрос вместо запроса на кластер."""
+    grouped: dict[int, list[dict]] = {int(cid): [] for cid in cluster_ids}
+    ids = list(grouped)
+    for start in range(0, len(ids), 400):
+        chunk = ids[start:start + 400]
+        placeholders = ",".join("?" for _ in chunk)
+        rows = db.query(
+            f"SELECT * FROM posts WHERE cluster_id IN ({placeholders}) "
+            "ORDER BY cluster_id, published_at ASC",
+            chunk,
+        )
+        for row in rows:
+            grouped[int(row["cluster_id"])].append(row)
+    return grouped
+
+
+def _cluster_row(cluster_id: int, posts: list[dict]) -> tuple:
     count, _ = independent_sources(posts)
     ents: set[str] = set()
     for post in posts:
@@ -82,15 +96,31 @@ def recompute(db: DB, cluster_id: int) -> dict | None:
         len(p.get("title") or ""),
     ))
     tokens = max(len(util.tokens(f"{p.get('title') or ''} {p.get('text') or ''}")) for p in posts)
-    db.execute(
-        """UPDATE clusters
-           SET source_count = ?, entities = ?, title = ?, updated_at = ?,
-               first_seen_at = ?, divergence = ?, tokens = ?
-           WHERE id = ?""",
-        (count, dumps(sorted(ents)[:120]), (best.get("title") or "")[:500], util.now_iso(),
-         min(p["published_at"] for p in posts), _divergence(posts), tokens, cluster_id),
-    )
+    return (count, dumps(sorted(ents)[:120]), (best.get("title") or "")[:500], util.now_iso(),
+            min(p["published_at"] for p in posts), _divergence(posts), tokens, cluster_id)
+
+
+RECOMPUTE_SQL = """UPDATE clusters
+       SET source_count = ?, entities = ?, title = ?, updated_at = ?,
+           first_seen_at = ?, divergence = ?, tokens = ?,
+           status = CASE WHEN status = 'published' THEN 'published' ELSE 'new' END
+       WHERE id = ?"""
+
+
+def recompute(db: DB, cluster_id: int) -> dict | None:
+    posts = cluster_posts(db, cluster_id)
+    if not posts:
+        return None
+    db.execute(RECOMPUTE_SQL, _cluster_row(cluster_id, posts))
     return db.one("SELECT * FROM clusters WHERE id = ?", (cluster_id,))
+
+
+def recompute_many(db: DB, cluster_ids: list[int]) -> None:
+    if not cluster_ids:
+        return
+    grouped = posts_of(db, list(cluster_ids))
+    rows = [_cluster_row(cid, posts) for cid, posts in grouped.items() if posts]
+    db.execute_many(RECOMPUTE_SQL, rows)
 
 
 class ClusterIndex:
@@ -147,12 +177,6 @@ class ClusterIndex:
         return found
 
 
-def _attach(db: DB, post: dict, cluster_id: int) -> None:
-    db.execute("UPDATE posts SET cluster_id = ? WHERE id = ?", (cluster_id, post["id"]))
-    db.execute("UPDATE clusters SET status = CASE WHEN status = 'published' THEN status "
-               "ELSE 'new' END, updated_at = ? WHERE id = ?", (util.now_iso(), cluster_id))
-
-
 def _create(db: DB, post: dict) -> int:
     now = util.now_iso()
     tokens = len(util.tokens(f"{post.get('title') or ''} {post.get('text') or ''}"))
@@ -164,7 +188,6 @@ def _create(db: DB, post: dict) -> int:
          (post.get("title") or "")[:500], post.get("simhash"),
          post.get("entities") or "[]", tokens),
     )
-    db.execute("UPDATE posts SET cluster_id = ? WHERE id = ?", (cluster_id, post["id"]))
     return int(cluster_id)
 
 
@@ -221,8 +244,11 @@ def run(db: DB, llm: LLM, limit: int = 500) -> dict:
     touched: set[int] = set()
     index = ClusterIndex(db, conf["window_hours"])
 
+    links: list[tuple[int, int]] = []  # (cluster_id, post_id) — пишем одной пачкой
+
     def create(post: dict) -> int:
         cluster_id = _create(db, post)
+        links.append((cluster_id, int(post["id"])))
         index.add({
             "id": cluster_id,
             "simhash": post.get("simhash"),
@@ -234,10 +260,14 @@ def run(db: DB, llm: LLM, limit: int = 500) -> dict:
         return cluster_id
 
     def attach(post: dict, cluster: dict) -> None:
-        _attach(db, post, int(cluster["id"]))
-        index.merge(int(cluster["id"]), set(loads(post.get("entities"), []) or []))
+        cluster_id = int(cluster["id"])
+        links.append((cluster_id, int(post["id"])))
+        index.merge(cluster_id, set(loads(post.get("entities"), []) or []))
 
     for post in posts:
+        if util.out_of_time(reserve=90):
+            stats["interrupted"] = True
+            break
         post_hash = int(post.get("simhash") or 0)
         post_ents = set(loads(post.get("entities"), []) or [])
         post_tokens = len(util.tokens(f"{post.get('title') or ''} {post.get('text') or ''}"))
@@ -312,6 +342,6 @@ def run(db: DB, llm: LLM, limit: int = 500) -> dict:
                 touched.add(create(post))
                 stats["created"] += 1
 
-    for cluster_id in touched:
-        recompute(db, cluster_id)
+    db.execute_many("UPDATE posts SET cluster_id = ? WHERE id = ?", links)
+    recompute_many(db, list(touched))
     return stats

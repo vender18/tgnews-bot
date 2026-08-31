@@ -234,6 +234,26 @@ class DB:
             self._conn.commit()
         cur.close()
 
+    def execute_many(self, sql: str, rows: Sequence[Sequence[Any]]) -> None:
+        """Пакетное выполнение: на удалённой БД это разница между секундой и минутой."""
+        if not rows:
+            return
+        cur = self._conn.cursor()
+        cur.executemany(self._prepare(sql), [tuple(r) for r in rows])
+        if self.dialect == "sqlite":
+            self._conn.commit()
+        cur.close()
+
+    def execute_count(self, sql: str, params: Sequence[Any] = ()) -> int:
+        """Как execute, но возвращает число затронутых строк."""
+        cur = self._conn.cursor()
+        cur.execute(self._prepare(sql), tuple(params))
+        count = cur.rowcount
+        if self.dialect == "sqlite":
+            self._conn.commit()
+        cur.close()
+        return count if count is not None else 0
+
     def insert_returning_id(self, sql: str, params: Sequence[Any] = ()) -> int | None:
         """INSERT ... RETURNING id — поддерживают и Postgres, и SQLite 3.35+."""
         cur = self._conn.cursor()

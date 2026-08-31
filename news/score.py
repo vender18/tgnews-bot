@@ -8,7 +8,7 @@ from . import filters, util
 from .collect import effective_weight
 from .config import config, source as get_source
 from .db import DB, chunks
-from .dedup import cluster_posts, independent_sources
+from .dedup import cluster_posts, independent_sources, posts_of
 from .llm import LLM
 
 log = logging.getLogger("score")
@@ -86,7 +86,7 @@ def _llm_scores(llm: LLM, clusters: list[dict], db: DB) -> dict[int, tuple[float
     persona = config().get("persona") or PERSONA_FALLBACK
     blocks = []
     for index, cluster in enumerate(clusters, start=1):
-        posts = cluster_posts(db, cluster["id"])
+        posts = cluster.get("_posts") or cluster_posts(db, cluster["id"])
         _, names = independent_sources(posts)
         text = util.shorten(posts[0].get("text") or "", 350) if posts else ""
         blocks.append(
@@ -133,9 +133,11 @@ def run(db: DB, llm: LLM) -> dict:
     focus = _focus_terms(db)
     stats = {"scored": len(clusters), "llm": 0}
     need_llm: list[dict] = []
+    grouped = posts_of(db, [int(c["id"]) for c in clusters])
+    updates: list[tuple] = []
 
     for cluster in clusters:
-        posts = cluster_posts(db, cluster["id"])
+        posts = grouped.get(int(cluster["id"])) or []
         if not posts:
             continue
         base, _parts = base_score(db, cluster, posts, focus)
@@ -143,14 +145,17 @@ def run(db: DB, llm: LLM) -> dict:
             final = base
         else:
             final = base * (1 - conf["llm_weight"]) + float(cluster["llm_score"]) * conf["llm_weight"]
-        db.execute(
-            "UPDATE clusters SET base_score = ?, score = ?, "
-            "status = CASE WHEN status = 'new' THEN 'scored' ELSE status END WHERE id = ?",
-            (base, final, cluster["id"]),
-        )
+        updates.append((base, final, cluster["id"]))
         if cluster.get("llm_score") is None and base >= conf["llm_threshold"]:
             cluster["base_score"] = base
+            cluster["_posts"] = posts
             need_llm.append(cluster)
+
+    db.execute_many(
+        "UPDATE clusters SET base_score = ?, score = ?, "
+        "status = CASE WHEN status = 'new' THEN 'scored' ELSE status END WHERE id = ?",
+        updates,
+    )
 
     batch_size = int(llm.tune("score_batch_size",
                               config()["llm"].get("score_batch_size", 10)))
@@ -159,6 +164,7 @@ def run(db: DB, llm: LLM) -> dict:
         if not scores:
             break  # модель недоступна или бюджет исчерпан — работаем на базовой формуле
         stats["llm"] += len(scores)
+        rows = []
         for cluster in batch:
             got = scores.get(int(cluster["id"]))
             if not got:
@@ -166,8 +172,7 @@ def run(db: DB, llm: LLM) -> dict:
             llm_score, why = got
             base = float(cluster.get("base_score") or 0)
             mixed = base * (1 - conf["llm_weight"]) + llm_score * conf["llm_weight"]
-            db.execute(
-                "UPDATE clusters SET llm_score = ?, llm_note = ?, score = ? WHERE id = ?",
-                (llm_score, why, mixed, cluster["id"]),
-            )
+            rows.append((llm_score, why, mixed, cluster["id"]))
+        db.execute_many(
+            "UPDATE clusters SET llm_score = ?, llm_note = ?, score = ? WHERE id = ?", rows)
     return stats

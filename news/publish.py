@@ -5,7 +5,7 @@ import logging
 
 from . import config as cfg
 from . import extract, telegram, util
-from .collect import effective_weight
+from .collect import effective_weight, reset_weight_cache
 from .config import config, source as get_source
 from .db import DB, dumps
 from .dedup import cluster_posts, independent_sources
@@ -410,6 +410,7 @@ def register_vote(db: DB, cluster_id: int, vote: int) -> str:
         touched.append(src.id)
     db.execute("INSERT INTO votes (cluster_id, source_id, vote, created_at) VALUES (?,?,?,?)",
                (cluster_id, ",".join(touched)[:200], vote, util.now_iso()))
+    reset_weight_cache()
     column = "votes_up" if vote > 0 else "votes_down"
     db.execute(f"UPDATE clusters SET {column} = {column} + 1 WHERE id = ?", (cluster_id,))
     return "учтено: важное" if vote > 0 else "учтено: лишнее"

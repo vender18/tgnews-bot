@@ -95,6 +95,7 @@ def retention(db: DB) -> dict:
 
 
 def tick(db: DB, llm: LLM, *, collect_only: bool = False) -> dict:
+    util.set_deadline(float(config().get("run_budget_seconds", 660)))
     stats: dict[str, object] = {}
     stats["collect"] = collect.collect_all(db)
     if collect_only:
