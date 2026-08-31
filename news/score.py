@@ -123,12 +123,15 @@ def _llm_scores(llm: LLM, clusters: list[dict], db: DB) -> dict[int, tuple[float
 
 def run(db: DB, llm: LLM) -> dict:
     conf = config()["score"]
-    since = util.iso(util.now_utc() - timedelta(hours=30))
+    # свежие и изменившиеся: у остальных оценка уже посчитана и меняется только
+    # от возраста, а это учтёт ближайший дайджест
+    since = util.iso(util.now_utc() - timedelta(hours=8))
     clusters = db.query(
         """SELECT * FROM clusters
-           WHERE status IN ('new', 'scored', 'queued') AND updated_at >= ?
-           ORDER BY updated_at DESC LIMIT 800""",
-        (since,),
+           WHERE (status = 'new' OR (status IN ('scored', 'queued') AND updated_at >= ?))
+             AND updated_at >= ?
+           ORDER BY updated_at DESC LIMIT 400""",
+        (since, util.iso(util.now_utc() - timedelta(hours=30))),
     )
     focus = _focus_terms(db)
     stats = {"scored": len(clusters), "llm": 0}

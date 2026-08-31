@@ -77,7 +77,9 @@ def posts_of(db: DB, cluster_ids: list[int]) -> dict[int, list[dict]]:
         chunk = ids[start:start + 400]
         placeholders = ",".join("?" for _ in chunk)
         rows = db.query(
-            f"SELECT * FROM posts WHERE cluster_id IN ({placeholders}) "
+            "SELECT id, cluster_id, source_id, publisher, lang, title, url, geo, "
+            "entities, published_at, simhash, SUBSTR(text, 1, 800) AS text "
+            f"FROM posts WHERE cluster_id IN ({placeholders}) "
             "ORDER BY cluster_id, published_at ASC",
             chunk,
         )
