@@ -1,0 +1,53 @@
+name: pipeline
+
+on:
+  schedule:
+    # каждые 10 минут; GitHub иногда задерживает запуск — окно догона в config.yaml это учитывает
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+    inputs:
+      command:
+        description: "Что выполнить"
+        required: true
+        default: tick
+        type: choice
+        options: [tick, collect, check-sources, digest, french, urgent, weekly, filter-report, stats]
+      channel:
+        description: "Канал для digest"
+        required: false
+        default: A
+        type: choice
+        options: [A, B, C]
+
+concurrency:
+  group: pipeline
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      - name: Запуск
+        env:
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHANNEL_A: ${{ secrets.TG_CHANNEL_A }}
+          TG_CHANNEL_B: ${{ secrets.TG_CHANNEL_B }}
+          TG_CHANNEL_C: ${{ secrets.TG_CHANNEL_C }}
+          TG_OWNER_ID: ${{ secrets.TG_OWNER_ID }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          LLM_PROVIDER: ${{ vars.LLM_PROVIDER || 'anthropic' }}
+        run: |
+          python -m news.cli ${{ github.event.inputs.command || 'tick' }} \
+            --channel ${{ github.event.inputs.channel || 'A' }}

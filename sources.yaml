@@ -1,0 +1,367 @@
+# Каталог источников.
+# type: rss | gnews | telegram_web | html
+# channel: A (политика/экономика) | B (Москва/Краснодар) | C (развивающее)
+# weight: базовый вес источника, тюнится обратной связью в диапазоне 0.2–1.2
+# lang: ru | en | fr
+
+sources:
+  # ============ КАНАЛ A — политика и экономика ============
+
+  # --- российские агентства (якорные) ---
+  - id: interfax
+    type: rss
+    url: "https://www.interfax.ru/rss.asp"
+    channel: A
+    weight: 1.0
+    lang: ru
+    publisher: "Интерфакс"
+    tags: [agency, politics, economics]
+
+  - id: tass
+    type: rss
+    url: "https://tass.ru/rss/v2.xml"
+    channel: A
+    weight: 1.0
+    lang: ru
+    publisher: "ТАСС"
+    tags: [agency, politics]
+
+  - id: ria
+    type: rss
+    url: "https://ria.ru/export/rss2/archive/index.xml"
+    channel: A
+    weight: 0.9
+    lang: ru
+    publisher: "РИА Новости"
+    tags: [agency, politics]
+
+  # --- деловые (основа канала) ---
+  - id: rbc
+    type: rss
+    url: "https://rssexport.rbc.ru/rbcnews/news/30/full.rss"
+    channel: A
+    weight: 0.9
+    lang: ru
+    publisher: "РБК"
+    tags: [economics, business]
+
+  - id: vedomosti
+    type: rss
+    url: "https://www.vedomosti.ru/rss/news"
+    channel: A
+    weight: 1.0
+    lang: ru
+    publisher: "Ведомости"
+    tags: [economics, business]
+
+  - id: kommersant
+    type: rss
+    url: "https://www.kommersant.ru/RSS/news.xml"
+    channel: A
+    weight: 1.0
+    lang: ru
+    publisher: "Коммерсантъ"
+    tags: [economics, politics]
+
+  - id: forbes_ru
+    type: rss
+    url: "https://www.forbes.ru/newrss.xml"
+    channel: A
+    weight: 0.8
+    lang: ru
+    publisher: "Forbes"
+    tags: [business]
+
+  # --- официальные (критичны для hard-триггеров) ---
+  - id: cbr
+    type: rss
+    url: "https://www.cbr.ru/rss/eventrss"
+    channel: A
+    weight: 1.0
+    lang: ru
+    publisher: "Банк России"
+    tags: [economics, official]
+    note: "ставка, курс, регулирование — всегда высокий приоритет"
+
+  - id: government
+    type: rss
+    url: "http://government.ru/all/rss/"
+    channel: A
+    weight: 1.0
+    lang: ru
+    publisher: "Правительство РФ"
+    tags: [politics, official]
+
+  # --- быстрые (сигнал скорости, не источник истины) ---
+  - id: baza
+    type: telegram_web
+    handle: "bazabazon"
+    channel: A
+    weight: 0.5
+    lang: ru
+    publisher: "Baza"
+    tags: [breaking, incidents]
+    note: "быстро, но требует подтверждения вторым источником"
+
+  - id: mash
+    type: telegram_web
+    handle: "mash"
+    channel: A
+    weight: 0.5
+    lang: ru
+    publisher: "Mash"
+    tags: [breaking, incidents]
+
+  - id: lenta
+    type: rss
+    url: "https://lenta.ru/rss/news"
+    channel: A
+    weight: 0.7
+    lang: ru
+    publisher: "Лента.ру"
+    tags: [general]
+
+  # --- иностранные (другая оптика на те же события) ---
+  - id: bbc_russian
+    type: rss
+    url: "https://feeds.bbci.co.uk/russian/rss.xml"
+    channel: A
+    weight: 0.9
+    lang: ru
+    foreign: true
+    publisher: "BBC Russian"
+    tags: [world, foreign]
+
+  - id: bbc_world
+    type: rss
+    url: "https://feeds.bbci.co.uk/news/world/rss.xml"
+    channel: A
+    weight: 0.9
+    lang: en
+    foreign: true
+    publisher: "BBC World"
+    tags: [world, foreign]
+
+  - id: guardian_world
+    type: rss
+    url: "https://www.theguardian.com/world/rss"
+    channel: A
+    weight: 0.9
+    lang: en
+    foreign: true
+    publisher: "The Guardian"
+    tags: [world, foreign]
+
+  - id: aljazeera
+    type: rss
+    url: "https://www.aljazeera.com/xml/rss/all.xml"
+    channel: A
+    weight: 0.8
+    lang: en
+    foreign: true
+    publisher: "Al Jazeera"
+    tags: [world, foreign]
+
+  - id: dw_russian
+    type: rss
+    url: "https://rss.dw.com/rdf/rss-ru-all"
+    channel: A
+    weight: 0.8
+    lang: ru
+    foreign: true
+    publisher: "Deutsche Welle"
+    tags: [world, foreign]
+
+  # ============ КАНАЛ B — Москва и Краснодар ============
+
+  - id: mos_ru
+    type: rss
+    url: "https://www.mos.ru/rss"
+    channel: B
+    weight: 0.9
+    lang: ru
+    geo: [moscow]
+    publisher: "mos.ru"
+    tags: [official]
+
+  - id: m24
+    type: rss
+    url: "https://www.m24.ru/rss.xml"
+    channel: B
+    weight: 0.8
+    lang: ru
+    geo: [moscow]
+    publisher: "Москва 24"
+
+  - id: msk_agency
+    type: rss
+    url: "https://www.mskagency.ru/rss/index.rss"
+    channel: B
+    weight: 0.8
+    lang: ru
+    geo: [moscow]
+    publisher: "Агентство Москва"
+
+  - id: gnews_moscow_incidents
+    type: gnews
+    query: "Москва происшествия"
+    channel: B
+    weight: 0.6
+    lang: ru
+    geo: [moscow]
+
+  - id: yuga_ru
+    type: rss
+    url: "https://www.yuga.ru/news.rss"
+    channel: B
+    weight: 0.9
+    lang: ru
+    geo: [krasnodar]
+    publisher: "Юга.ру"
+
+  - id: kubnews
+    type: rss
+    url: "https://kubnews.ru/rss/"
+    channel: B
+    weight: 0.8
+    lang: ru
+    geo: [krasnodar]
+    publisher: "Кубанские новости"
+
+  - id: rbc_kuban
+    type: gnews
+    query: "Краснодарский край экономика"
+    channel: B
+    weight: 0.8
+    lang: ru
+    geo: [krasnodar]
+
+  - id: gnews_krasnodar
+    type: gnews
+    query: "Краснодар"
+    channel: B
+    weight: 0.6
+    lang: ru
+    geo: [krasnodar]
+
+  # ============ КАНАЛ C — развивающее ============
+
+  - id: nplus1
+    type: rss
+    url: "https://nplus1.ru/rss"
+    channel: C
+    weight: 0.9
+    lang: ru
+    publisher: "N+1"
+    tags: [science]
+
+  - id: arzamas
+    type: rss
+    url: "https://arzamas.academy/feed_v1.rss"
+    channel: C
+    weight: 0.9
+    lang: ru
+    publisher: "Arzamas"
+    low_volume: true
+    tags: [history, culture]
+
+  - id: postnauka
+    type: rss
+    url: "https://postnauka.ru/feed"
+    channel: C
+    weight: 0.9
+    lang: ru
+    publisher: "ПостНаука"
+    low_volume: true
+    tags: [science, education]
+
+  - id: reminder
+    type: rss
+    url: "https://reminder.media/rss"
+    channel: C
+    weight: 0.8
+    lang: ru
+    publisher: "Reminder"
+    low_volume: true
+    tags: [psychology]
+
+  - id: tj
+    type: rss
+    url: "https://t-j.ru/feed/"
+    channel: C
+    weight: 0.7
+    lang: ru
+    publisher: "Т—Ж"
+    tags: [finance, business]
+
+  - id: vc_ru
+    type: rss
+    url: "https://vc.ru/rss/all"
+    channel: C
+    weight: 0.6
+    lang: ru
+    publisher: "vc.ru"
+    tags: [business, marketing, it]
+    strict_substance: true
+    note: "много мусора, нужен жёсткий фильтр на содержательность"
+
+  - id: habr_top
+    type: rss
+    url: "https://habr.com/ru/rss/best/daily/?fl=ru"
+    channel: C
+    weight: 0.7
+    lang: ru
+    publisher: "Хабр"
+    tags: [it]
+
+  - id: kod_ru
+    type: rss
+    url: "https://kod.ru/rss"
+    fallback_url: "https://kod.ru/feed"
+    gnews_fallback: "site:kod.ru"
+    channel: C
+    weight: 0.7
+    lang: ru
+    publisher: "Код Дурова"
+    tags: [it, tech]
+    strict_substance: true
+    note: >
+      Формат ближе к новостям, чем к лонгридам: пропускать разборы и объяснения
+      механизмов, дропать заметки формата "вышло обновление / компания заявила".
+
+  - id: hbr_ru
+    type: gnews
+    query: "Harvard Business Review"
+    channel: C
+    low_volume: true
+    weight: 0.6
+    lang: ru
+    tags: [business, management]
+
+  # --- французская рубрика канала C (публикуется отдельным постом) ---
+  - id: france_info
+    type: rss
+    url: "https://www.francetvinfo.fr/titres.rss"
+    channel: C
+    weight: 0.8
+    lang: fr
+    publisher: "France Info"
+    tags: [fr, world]
+
+  - id: le_monde
+    type: rss
+    url: "https://www.lemonde.fr/rss/une.xml"
+    channel: C
+    weight: 0.9
+    lang: fr
+    publisher: "Le Monde"
+    tags: [fr, world]
+
+  - id: rfi_fr
+    type: rss
+    url: "https://www.rfi.fr/fr/monde/rss"
+    channel: C
+    weight: 0.8
+    lang: fr
+    publisher: "RFI"
+    tags: [fr, world]
