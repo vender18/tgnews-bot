@@ -194,8 +194,10 @@ def check_sources(db: DB) -> list[dict]:
         except Exception as exc:  # noqa: BLE001
             result = FetchResult(error=f"{type(exc).__name__}: {exc}")
 
+        broken = False  # источник недоступен, а не просто молчит
         if result.error:
             entry["error"] = result.error
+            broken = True
         else:
             entry["items"] = len(result.posts)
             entry["fresh"] = sum(1 for p in result.posts if p.published_at >= fresh_after)
@@ -213,8 +215,10 @@ def check_sources(db: DB) -> list[dict]:
                     entry["error"] = f"свежих записей за 48ч: {entry['fresh']}"
         report.append(entry)
 
+        # отключаем только то, что реально не отвечает: пустая выдача бывает
+        # временной — из-за гео, кеша издания или редких публикаций
         db.execute(
             "UPDATE sources_state SET last_error = ?, active = ?, fail_count = 0 WHERE id = ?",
-            (entry["error"], 1 if entry["ok"] else 0, source_id),
+            (entry["error"], 0 if broken else 1, source_id),
         )
     return report
