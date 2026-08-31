@@ -18,7 +18,8 @@ def _focus_terms(db: DB) -> list[str]:
     return [t.lower() for t in (db.kv_get("focus", []) or [])]
 
 
-def base_score(db: DB, cluster: dict, posts: list[dict], focus: list[str]) -> tuple[float, dict]:
+def base_score(db: DB, cluster: dict, posts: list[dict], focus: list[str],
+               exam: bool | None = None) -> tuple[float, dict]:
     conf = config()["score"]
     w = conf["weights"]
     parts: dict[str, float] = {}
@@ -64,7 +65,9 @@ def base_score(db: DB, cluster: dict, posts: list[dict], focus: list[str]) -> tu
     if cluster.get("divergence"):
         parts["divergence"] = 5.0
 
-    if db.kv_get("exam_mode", False) and cluster["channel"] == "C":
+    if exam is None:
+        exam = bool(db.kv_get("exam_mode", False))
+    if exam and cluster["channel"] == "C":
         tags = {tag for p in posts for tag in ((get_source(p["source_id"]).tags or [])
                                                if get_source(p["source_id"]) else [])}
         if tags & {"education", "science", "history", "fr"}:
@@ -134,6 +137,7 @@ def run(db: DB, llm: LLM) -> dict:
         (since, util.iso(util.now_utc() - timedelta(hours=30))),
     )
     focus = _focus_terms(db)
+    exam = bool(db.kv_get("exam_mode", False))  # один раз на прогон, не на кластер
     stats = {"scored": len(clusters), "llm": 0}
     need_llm: list[dict] = []
     grouped = posts_of(db, [int(c["id"]) for c in clusters])
@@ -143,7 +147,7 @@ def run(db: DB, llm: LLM) -> dict:
         posts = grouped.get(int(cluster["id"])) or []
         if not posts:
             continue
-        base, _parts = base_score(db, cluster, posts, focus)
+        base, _parts = base_score(db, cluster, posts, focus, exam)
         if cluster.get("llm_score") is None:
             final = base
         else:
