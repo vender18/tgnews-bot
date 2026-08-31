@@ -28,11 +28,23 @@ class LLM:
         self.provider = (cfg.env("LLM_PROVIDER") or conf.get("provider") or "none").lower()
         self.models = conf["models"].get(self.provider, {})
         self._client = None
+        self.used: dict[str, int] = {}
         self.enabled = bool(conf.get("enabled", True)) and self.provider != "none"
         if self.enabled and self.provider == "anthropic" and not cfg.env("ANTHROPIC_API_KEY"):
             self.enabled = False
         if self.enabled and self.provider == "groq" and not cfg.env("GROQ_API_KEY"):
             self.enabled = False
+
+    @property
+    def compact(self) -> bool:
+        """Провайдер с жёстким лимитом токенов в минуту: батчи меньше, тексты короче."""
+        return self.provider == "groq"
+
+    def tune(self, key: str, default):
+        """Значение настройки с поправкой на компактный режим."""
+        if self.compact:
+            return self.conf.get("compact", {}).get(key, default)
+        return default
 
     # --- бюджет ------------------------------------------------------------
 
@@ -65,15 +77,29 @@ class LLM:
     def model_for(self, smart: bool) -> str:
         return self.models.get("smart" if smart else "cheap", "")
 
+    def quota_left(self, purpose: str) -> int:
+        """Сколько вызовов на эту задачу ещё можно сделать за один тик.
+
+        Квоты нужны, чтобы склейка не съела весь лимит запросов и на пересказы
+        публикуемого материала точно осталось место.
+        """
+        quotas = self.conf.get("quotas", {})
+        if self.compact:
+            quotas = self.conf.get("compact", {}).get("quotas", quotas)
+        limit = int(quotas.get(purpose, quotas.get("default", 6)))
+        return limit - self.used.get(purpose, 0)
+
     def ask(self, prompt: str, *, system: str | None = None, smart: bool = False,
             purpose: str = "", max_tokens: int | None = None,
             effort: str = "low") -> str | None:
-        if not self.available:
+        if not self.available or self.quota_left(purpose) <= 0:
             return None
+        self.used[purpose] = self.used.get(purpose, 0) + 1
         model = self.model_for(smart)
         if not model:
             return None
-        max_tokens = max_tokens or int(self.conf.get("max_output_tokens", 2000))
+        ceiling = int(self.tune("max_output_tokens", self.conf.get("max_output_tokens", 2000)))
+        max_tokens = min(max_tokens or ceiling, ceiling)
         try:
             if self.provider == "anthropic":
                 return self._ask_anthropic(model, prompt, system, max_tokens, purpose, effort)
@@ -174,4 +200,23 @@ def parse_json(raw: str | None):
                         return json.loads(text[start:i + 1])
                     except json.JSONDecodeError:
                         break
-    return None
+
+    # ответ оборвался на середине (частая беда бесплатных тарифов):
+    # собираем те объекты массива, которые успели прийти целиком
+    salvaged = []
+    depth = 0
+    chunk_start = None
+    for i, ch in enumerate(text):
+        if ch == "{":
+            if depth == 0:
+                chunk_start = i
+            depth += 1
+        elif ch == "}" and depth:
+            depth -= 1
+            if depth == 0 and chunk_start is not None:
+                try:
+                    salvaged.append(json.loads(text[chunk_start:i + 1]))
+                except json.JSONDecodeError:
+                    pass
+                chunk_start = None
+    return salvaged or None

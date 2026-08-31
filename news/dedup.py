@@ -173,8 +173,9 @@ def _llm_same_event(llm: LLM, pairs: list[tuple[dict, dict]]) -> dict[int, bool]
     if not llm.available or not pairs:
         return {}
     verdicts: dict[int, bool] = {}
-    for start in range(0, len(pairs), 20):
-        batch = pairs[start:start + 20]
+    size = int(llm.tune("dedup_batch_size", 20))
+    for start in range(0, len(pairs), size):
+        batch = pairs[start:start + size]
         for local, same in _llm_same_event_batch(llm, batch).items():
             verdicts[start + local] = same
     return verdicts

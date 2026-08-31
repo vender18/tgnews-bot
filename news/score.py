@@ -152,7 +152,8 @@ def run(db: DB, llm: LLM) -> dict:
             cluster["base_score"] = base
             need_llm.append(cluster)
 
-    batch_size = int(config()["llm"].get("score_batch_size", 10))
+    batch_size = int(llm.tune("score_batch_size",
+                              config()["llm"].get("score_batch_size", 10)))
     for batch in chunks(need_llm, batch_size):
         scores = _llm_scores(llm, batch, db)
         if not scores:

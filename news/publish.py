@@ -97,7 +97,8 @@ def summarize_batch(db: DB, llm: LLM, items: list[tuple[dict, list[dict]]]
     for index, (cluster, posts) in enumerate(items, start=1):
         _, names = independent_sources(posts)
         best = _best_post(posts, db)
-        body = util.shorten(util.strip_promo(best.get("text") or ""), 1200)
+        body = util.shorten(util.strip_promo(best.get("text") or ""),
+                            int(llm.tune("summary_body_chars", 1200)))
         others = [util.shorten(p.get("title") or "", 120) for p in posts[:4]
                   if p["id"] != best["id"]]
         blocks.append(

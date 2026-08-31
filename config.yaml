@@ -115,7 +115,7 @@ exam_mode:
 
 llm:
   enabled: true
-  provider: "anthropic"          # anthropic | groq | none
+  provider: "groq"               # anthropic | groq | none
   models:
     anthropic:
       cheap: "claude-haiku-4-5"  # дедуп-проверка и батч-скоринг
@@ -132,6 +132,28 @@ llm:
     openai/gpt-oss-120b: { input: 0.0, output: 0.0 }
   score_batch_size: 10
   max_output_tokens: 2000
+  # сколько запросов к модели допустимо за один прогон, по задачам
+  quotas:
+    dedup: 4
+    score: 6
+    summary: 6
+    french: 1
+    weekly: 1
+    default: 4
+  # у Groq бесплатный тариф даёт 8000 токенов в минуту, а длинный JSON он обрывает:
+  # для него батчи меньше, тексты короче, ответы компактнее
+  compact:
+    score_batch_size: 5
+    dedup_batch_size: 10
+    summary_body_chars: 600
+    max_output_tokens: 1100
+    quotas:
+      dedup: 2
+      score: 3
+      summary: 4
+      french: 1
+      weekly: 1
+      default: 2
 
 extract:
   # дотягивание полного текста статьи для того, что реально идёт в публикацию
