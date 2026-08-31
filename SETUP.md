@@ -46,19 +46,14 @@ Create API Key. Строка вида `gsk_...` — это `GROQ_API_KEY`.
 Тогда оценкой займётся Haiku, пересказами — Sonnet, с потолком расхода
 `llm.daily_budget_usd` (0,60 $ в сутки).
 
-## 5. Репозиторий и запуск
+## 5. Секреты в репозитории
 
-```bash
-cd ~/Desktop/claude-projects/tgnews-bot
-gh repo create tgnews-bot --public --source=. --push
-```
+Код уже лежит в [github.com/vender18/tgnews-bot](https://github.com/vender18/tgnews-bot).
+Репозиторий публичный ради бесплатных минут GitHub Actions: приватному на расписании
+«каждые 10 минут» бесплатного лимита не хватит. Секретов в коде нет — все токены
+живут в настройках репозитория.
 
-Публичный репозиторий нужен ради бесплатных минут GitHub Actions: приватному
-на расписании «каждые 10 минут» бесплатного лимита не хватит. Секретов в коде нет —
-все токены живут в настройках репозитория.
-
-Дальше в репозитории: **Settings → Secrets and variables → Actions → New repository secret**
-и добавить по одному:
+**Settings → Secrets and variables → Actions → New repository secret**, по одному:
 
 | Имя | Значение |
 |---|---|
@@ -72,7 +67,23 @@ gh repo create tgnews-bot --public --source=. --push
 
 Провайдер по умолчанию уже `groq` — ничего дополнительно указывать не нужно.
 
-## 6. Первый запуск
+## 6. Включить расписание
+
+Файлы расписания лежат в папке `setup/workflows` — токен, которым загружался код,
+не имел права создавать их в `.github/workflows`. Чинится один раз:
+
+1. GitHub → аватар → **Settings** → **Developer settings** → **Personal access tokens**
+   → **Tokens (classic)** → свой токен → **Edit** → галочка **workflow** → **Update token**.
+2. В терминале:
+
+```bash
+cd ~/Desktop/claude-projects/tgnews-bot
+git mv setup/workflows .github/workflows
+git commit -m "Расписание GitHub Actions"
+git push
+```
+
+## 7. Первый запуск
 
 Вкладка **Actions → pipeline → Run workflow** → команда `check-sources`.
 В логе будет отчёт: сколько источников живо. Дальше ничего запускать не нужно —
@@ -81,7 +92,7 @@ gh repo create tgnews-bot --public --source=. --push
 Первые сутки лучше просто дать поработать: система копит поток, чтобы было из чего
 выбирать. Дайджесты начнут выходить по расписанию (08:00 / 14:30 / 20:00 для «Главного»).
 
-## 7. Подстройка под себя
+## 8. Подстройка под себя
 
 Всё делается командами боту в личке:
 
