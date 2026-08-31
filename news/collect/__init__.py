@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
 
 from .. import filters, util
@@ -77,13 +78,20 @@ def is_due(src: Source, state: dict, now) -> bool:
     return now - last >= timedelta(minutes=minutes)
 
 
-def store_post(db: DB, src: Source, raw: RawPost) -> str:
-    """Кладёт пост. Возвращает 'new' | 'dup' | 'old' | 'dropped:<причина>'."""
+INSERT_POST_SQL = """INSERT INTO posts (source_id, external_id, title, text, url, publisher,
+                          lang, section, published_at, fetched_at, simhash, entities,
+                          channel, geo, dropped, drop_reason)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+       ON CONFLICT (source_id, external_id) DO NOTHING"""
+
+
+def prepare_post(src: Source, raw: RawPost) -> tuple[str, tuple | None]:
+    """Готовит строку к вставке. Возвращает ('new'|'old'|'dropped:...', данные)."""
     conf = config()["collect"]
     age_hours = (util.now_utc() - raw.published_at).total_seconds() / 3600
     max_age = 24 * 5 if src.low_volume else conf["max_age_hours"]
     if age_hours > max_age:
-        return "old"
+        return "old", None
     if age_hours < -6:  # источник с кривой таймзоной
         raw.published_at = util.now_utc()
 
@@ -91,24 +99,41 @@ def store_post(db: DB, src: Source, raw: RawPost) -> str:
     text = raw.text or ""
     keep, reason, geo = filters.classify(src, title, text)
     blob = f"{title}\n{text}"
-
-    written = db.execute_count(
-        """INSERT INTO posts (source_id, external_id, title, text, url, publisher, lang,
-                              section, published_at, fetched_at, simhash, entities,
-                              channel, geo, dropped, drop_reason)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-           ON CONFLICT (source_id, external_id) DO NOTHING""",
-        (
-            src.id, raw.external_id, title[:500] or None, text[:6000], raw.url[:900],
-            raw.publisher or src.publisher, raw.lang or src.lang, raw.section,
-            util.iso(raw.published_at), util.now_iso(),
-            str(util.simhash(blob)), dumps(sorted(util.entities(blob))),
-            src.channel, dumps(geo), 0 if keep else 1, reason,
-        ),
+    row = (
+        src.id, raw.external_id, title[:500] or None, text[:6000], raw.url[:900],
+        raw.publisher or src.publisher, raw.lang or src.lang, raw.section,
+        util.iso(raw.published_at), util.now_iso(),
+        str(util.simhash(blob)), dumps(sorted(util.entities(blob))),
+        src.channel, dumps(geo), 0 if keep else 1, reason,
     )
-    if not written:
+    return ("new" if keep else f"dropped:{reason}"), row
+
+
+def store_post(db: DB, src: Source, raw: RawPost) -> str:
+    """Одиночная вставка — для команд и тестов; в конвейере посты пишутся пачкой."""
+    outcome, row = prepare_post(src, raw)
+    if row is None:
+        return outcome
+    if not db.execute_count(INSERT_POST_SQL, row):
         return "dup"
-    return "new" if keep else f"dropped:{reason}"
+    return outcome
+
+
+def known_ids(db: DB, source_id: str, external_ids: list[str]) -> set[str]:
+    """Какие записи источника уже лежат в базе — одним запросом вместо запроса на пост."""
+    if not external_ids:
+        return set()
+    found: set[str] = set()
+    for start in range(0, len(external_ids), 200):
+        chunk = external_ids[start:start + 200]
+        placeholders = ",".join("?" for _ in chunk)
+        rows = db.query(
+            f"SELECT external_id FROM posts WHERE source_id = ? "
+            f"AND external_id IN ({placeholders})",
+            (source_id, *chunk),
+        )
+        found.update(r["external_id"] for r in rows)
+    return found
 
 
 def fetch_source(src: Source, state: dict) -> FetchResult:
@@ -129,18 +154,23 @@ def fetch_source(src: Source, state: dict) -> FetchResult:
     return result
 
 
-def collect_all(db: DB, *, only: list[str] | None = None, force: bool = False) -> dict:
+def collect_all(db: DB, *, only: list[str] | None = None, force: bool = False,
+                workers: int = 8) -> dict:
+    """Опрашивает источники параллельно, а пишет в базу одним потоком и пачками."""
     now = util.now_utc()
     catalog = all_sources(db)
     stats = {"checked": 0, "new": 0, "dropped": 0, "errors": [], "per_source": {}}
 
+    states = {row["id"]: row for row in db.query("SELECT * FROM sources_state")}
+    due: list[tuple[Source, dict]] = []
+    fresh_states: list[tuple[str]] = []
     for source_id, src in catalog.items():
         if only and source_id not in only:
             continue
-        if util.out_of_time(reserve=150):
-            stats["errors"].append("сбор прерван по времени, продолжится следующим прогоном")
-            break
-        state = state_of(db, source_id)
+        state = states.get(source_id)
+        if state is None:
+            fresh_states.append((source_id,))
+            state = {"id": source_id}
         if not force:
             if not state.get("active", 1):
                 continue
@@ -149,50 +179,73 @@ def collect_all(db: DB, *, only: list[str] | None = None, force: bool = False) -
                 continue
             if not is_due(src, state, now):
                 continue
+        due.append((src, state))
 
-        stats["checked"] += 1
+    db.execute_many("INSERT INTO sources_state (id) VALUES (?) ON CONFLICT (id) DO NOTHING",
+                    fresh_states)
+    if not due:
+        return stats
+
+    def poll(pair: tuple[Source, dict]) -> tuple[Source, dict, FetchResult]:
+        src, state = pair
         try:
-            result = fetch_source(src, state)
-        except Exception as exc:  # noqa: BLE001 — падение источника не должно ронять конвейер
-            result = FetchResult(error=f"{type(exc).__name__}: {exc}")
+            return src, state, fetch_source(src, state)
+        except Exception as exc:  # noqa: BLE001 — падение источника не рушит конвейер
+            return src, state, FetchResult(error=f"{type(exc).__name__}: {exc}")
 
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        results = list(pool.map(poll, due))
+
+    rows_to_insert: list[tuple] = []
+    ok_updates: list[tuple] = []
+    fail_updates: list[tuple] = []
+    deactivate_after = config()["collect"]["deactivate_after_failures"]
+
+    for src, state, result in results:
+        stats["checked"] += 1
         if result.error:
             fails = int(state.get("fail_count") or 0) + 1
-            deactivate = fails >= config()["collect"]["deactivate_after_failures"]
-            db.execute(
-                """UPDATE sources_state
-                   SET last_fetch = ?, last_error = ?, fail_count = ?, active = ?
-                   WHERE id = ?""",
-                (util.now_iso(), result.error[:300], fails, 0 if deactivate else 1, source_id),
-            )
-            stats["errors"].append(f"{source_id}: {result.error}")
-            log.warning("источник %s: %s", source_id, result.error)
+            fail_updates.append((util.now_iso(), result.error[:300], fails,
+                                 0 if fails >= deactivate_after else 1, src.id))
+            stats["errors"].append(f"{src.id}: {result.error}")
+            log.warning("источник %s: %s", src.id, result.error)
             continue
 
+        seen = known_ids(db, src.id, [p.external_id for p in result.posts])
         added = dropped = 0
         for raw in result.posts:
-            try:
-                outcome = store_post(db, src, raw)
-            except Exception as exc:  # noqa: BLE001
-                log.warning("пост %s/%s не сохранён: %s", source_id, raw.external_id, exc)
+            if raw.external_id in seen:
                 continue
+            try:
+                outcome, row = prepare_post(src, raw)
+            except Exception as exc:  # noqa: BLE001
+                log.warning("пост %s/%s не разобран: %s", src.id, raw.external_id, exc)
+                continue
+            if row is None:
+                continue
+            rows_to_insert.append(row)
             if outcome == "new":
                 added += 1
-            elif outcome.startswith("dropped"):
+            else:
                 dropped += 1
 
-        db.execute(
-            """UPDATE sources_state
-               SET last_fetch = ?, last_ok = ?, last_error = NULL, fail_count = 0,
-                   etag = ?, last_modified = ?, items_total = items_total + ?
-               WHERE id = ?""",
-            (util.now_iso(), util.now_iso(), result.etag, result.last_modified, added, source_id),
-        )
+        ok_updates.append((util.now_iso(), util.now_iso(), result.etag, result.last_modified,
+                           added, src.id))
         stats["new"] += added
         stats["dropped"] += dropped
         if added or dropped:
-            stats["per_source"][source_id] = {"new": added, "dropped": dropped}
+            stats["per_source"][src.id] = {"new": added, "dropped": dropped}
 
+    db.execute_many(INSERT_POST_SQL, rows_to_insert)
+    db.execute_many(
+        """UPDATE sources_state
+           SET last_fetch = ?, last_error = ?, fail_count = ?, active = ?
+           WHERE id = ?""", fail_updates)
+    db.execute_many(
+        """UPDATE sources_state
+           SET last_fetch = ?, last_ok = ?, last_error = NULL, fail_count = 0,
+               etag = ?, last_modified = ?, items_total = items_total + ?
+           WHERE id = ?""", ok_updates)
     return stats
 
 

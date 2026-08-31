@@ -135,6 +135,9 @@ llm:
     openai/gpt-oss-120b: { input: 0.0, output: 0.0 }
   score_batch_size: 10
   max_output_tokens: 2000
+  # ответ дольше этого не ждём, а всего на модель — не больше пары минут за прогон
+  request_timeout_seconds: 45
+  time_budget_seconds: 150
   # сколько запросов к модели допустимо за один прогон, по задачам
   quotas:
     dedup: 4

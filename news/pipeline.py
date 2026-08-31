@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from datetime import datetime
 
 from . import collect, commands, dedup, french, publish, reports, score, telegram, util
@@ -97,13 +98,26 @@ def retention(db: DB) -> dict:
 def tick(db: DB, llm: LLM, *, collect_only: bool = False) -> dict:
     util.set_deadline(float(config().get("run_budget_seconds", 660)))
     stats: dict[str, object] = {}
-    stats["collect"] = collect.collect_all(db)
+    timings: dict[str, float] = {}
+
+    def stage(name: str, fn):
+        started = time.monotonic()
+        try:
+            return fn()
+        finally:
+            timings[name] = round(time.monotonic() - started, 1)
+            log.info("этап %s: %.1f с", name, timings[name])
+
+    stats["collect"] = stage("collect", lambda: collect.collect_all(db))
     if collect_only:
+        stats["timings"] = timings
         return stats
-    stats["dedup"] = dedup.run(db, llm)
-    stats["score"] = score.run(db, llm)
-    stats["urgent"] = publish.publish_urgent(db, llm)
-    stats["schedule"] = run_schedule(db, llm)
-    stats["commands"] = commands.poll(db, llm)
+    stats["dedup"] = stage("dedup", lambda: dedup.run(db, llm))
+    stats["score"] = stage("score", lambda: score.run(db, llm))
+    stats["urgent"] = stage("urgent", lambda: publish.publish_urgent(db, llm))
+    stats["schedule"] = stage("schedule", lambda: run_schedule(db, llm))
+    stats["commands"] = stage("commands", lambda: commands.poll(db, llm))
     stats["llm_spent"] = round(llm.spent_today(), 4)
+    stats["llm_seconds"] = round(llm.seconds_spent, 1)
+    stats["timings"] = timings
     return stats

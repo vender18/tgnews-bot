@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import time
 
 from . import config as cfg
 from . import util
@@ -29,6 +30,7 @@ class LLM:
         self.models = conf["models"].get(self.provider, {})
         self._client = None
         self.used: dict[str, int] = {}
+        self.seconds_spent = 0.0
         self.enabled = bool(conf.get("enabled", True)) and self.provider != "none"
         if self.enabled and self.provider == "anthropic" and not cfg.env("ANTHROPIC_API_KEY"):
             self.enabled = False
@@ -56,6 +58,10 @@ class LLM:
     @property
     def available(self) -> bool:
         if not self.enabled:
+            return False
+        # модель не должна съедать весь прогон: у бесплатных тарифов
+        # один ответ иногда идёт минуту
+        if self.seconds_spent >= float(self.conf.get("time_budget_seconds", 180)):
             return False
         budget = float(self.conf.get("daily_budget_usd") or 0)
         if budget <= 0:
@@ -95,6 +101,7 @@ class LLM:
         if not self.available or self.quota_left(purpose) <= 0:
             return None
         self.used[purpose] = self.used.get(purpose, 0) + 1
+        started = time.monotonic()
         model = self.model_for(smart)
         if not model:
             return None
@@ -105,8 +112,13 @@ class LLM:
                 return self._ask_anthropic(model, prompt, system, max_tokens, purpose, effort)
             if self.provider == "groq":
                 return self._ask_groq(model, prompt, system, max_tokens, purpose)
+            return None
         except Exception as exc:  # noqa: BLE001 — модель не должна ронять конвейер
             log.warning("LLM (%s, %s) отказала: %s", self.provider, purpose, exc)
+        finally:
+            elapsed = time.monotonic() - started
+            self.seconds_spent += elapsed
+            log.info("модель: %s за %.1f с (всего %.1f с)", purpose, elapsed, self.seconds_spent)
         return None
 
     def _ask_anthropic(self, model: str, prompt: str, system: str | None,
@@ -114,8 +126,9 @@ class LLM:
         import anthropic
 
         if self._client is None:
-            self._client = anthropic.Anthropic(api_key=cfg.env("ANTHROPIC_API_KEY"),
-                                               max_retries=3, timeout=90.0)
+            self._client = anthropic.Anthropic(
+                api_key=cfg.env("ANTHROPIC_API_KEY"), max_retries=2,
+                timeout=float(self.conf.get("request_timeout_seconds", 45)))
         kwargs: dict = {
             "model": model,
             "max_tokens": max_tokens,
@@ -153,7 +166,7 @@ class LLM:
             headers={"Authorization": f"Bearer {cfg.env('GROQ_API_KEY')}"},
             json={"model": model, "messages": messages, "max_tokens": max_tokens,
                   "temperature": 0.2},
-            timeout=90.0,
+            timeout=float(self.conf.get("request_timeout_seconds", 45)),
         )
         if response.status_code >= 400:
             log.warning("Groq %s: %s", response.status_code, response.text[:200])
