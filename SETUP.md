@@ -69,19 +69,18 @@ Create API Key. Строка вида `gsk_...` — это `GROQ_API_KEY`.
 
 ## 6. Включить расписание
 
-Файлы расписания лежат в папке `setup/workflows` — токен, которым загружался код,
-не имел права создавать их в `.github/workflows`. Чинится один раз:
+Файлы расписания уже лежат на месте — в `.github/workflows/`, коммит готов.
+Осталось разрешить токену их отправлять: GitHub не принимает файлы расписания
+от токена без права `workflow`.
 
-1. GitHub → аватар → **Settings** → **Developer settings** → **Personal access tokens**
-   → **Tokens (classic)** → свой токен → **Edit** → галочка **workflow** → **Update token**.
-2. В терминале:
+1. Открыть [github.com/settings/tokens](https://github.com/settings/tokens) →
+   свой токен → **Edit** → галочка **workflow** → **Update token**.
+2. `git push` — и расписание на GitHub.
 
-```bash
-cd ~/Desktop/claude-projects/tgnews-bot
-git mv setup/workflows .github/workflows
-git commit -m "Расписание GitHub Actions"
-git push
-```
+Запасной путь без терминала: открыть
+[setup/workflows/pipeline.yml](https://github.com/vender18/tgnews-bot/edit/main/setup/workflows/pipeline.yml)
+на GitHub, нажать карандаш и в поле с именем файла заменить путь на
+`.github/workflows/pipeline.yml`, затем Commit changes. То же самое для `health.yml`.
 
 ## 7. Первый запуск
 
