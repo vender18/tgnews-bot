@@ -121,7 +121,53 @@ sources:
     publisher: "Лента.ру"
     tags: [general]
 
+  - id: rg
+    type: rss
+    url: "https://rg.ru/xml/index.xml"
+    channel: A
+    weight: 0.8
+    lang: ru
+    publisher: "Российская газета"
+    tags: [official, general]
+
+  - id: kommersant_economics
+    type: rss
+    url: "https://www.kommersant.ru/RSS/section-economics.xml"
+    channel: A
+    weight: 0.9
+    lang: ru
+    publisher: "Коммерсантъ"
+    tags: [economics]
+
+  - id: banki
+    type: rss
+    url: "https://www.banki.ru/xml/news.rss"
+    channel: A
+    weight: 0.6
+    lang: ru
+    publisher: "Банки.ру"
+    tags: [economics, finance]
+
+  - id: finam
+    type: rss
+    url: "https://www.finam.ru/analysis/conews/rsspoint"
+    channel: A
+    weight: 0.6
+    lang: ru
+    publisher: "Финам"
+    tags: [economics, markets]
+
   # --- иностранные (другая оптика на те же события) ---
+  - id: meduza
+    type: rss
+    url: "https://meduza.io/rss2/all"
+    channel: A
+    weight: 0.7
+    lang: ru
+    foreign: true
+    publisher: "Медуза"
+    tags: [world, foreign]
+
   - id: bbc_russian
     type: rss
     url: "https://feeds.bbci.co.uk/russian/rss.xml"
@@ -228,6 +274,15 @@ sources:
     geo: [krasnodar]
     publisher: "Кубанские новости"
 
+  - id: kubantoday
+    type: rss
+    url: "https://kubantoday.ru/feed/"
+    channel: B
+    weight: 0.7
+    lang: ru
+    geo: [krasnodar]
+    publisher: "Кубань сегодня"
+
   - id: rbc_kuban
     type: gnews
     query: "Краснодарский край экономика"
@@ -264,6 +319,24 @@ sources:
     publisher: "Arzamas"
     low_volume: true
     tags: [history, culture]
+
+  - id: naked_science
+    type: rss
+    url: "https://naked-science.ru/feed"
+    channel: C
+    weight: 0.8
+    lang: ru
+    publisher: "Naked Science"
+    tags: [science]
+
+  - id: elementy
+    type: rss
+    url: "https://elementy.ru/rss/news"
+    channel: C
+    weight: 0.85
+    lang: ru
+    publisher: "Элементы"
+    tags: [science]
 
   - id: postnauka
     type: rss

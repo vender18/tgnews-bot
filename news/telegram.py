@@ -29,6 +29,15 @@ def call(method: str, payload: dict[str, Any] | None = None, *, timeout: float =
     return data.get("result")
 
 
+def try_send(chat_id: str | int, text: str, **kwargs) -> dict | None:
+    """Отправка, которая не рушит прогон: канал мог быть удалён или неверно указан."""
+    try:
+        return send_message(chat_id, text, **kwargs)
+    except TelegramError as exc:
+        log.warning("не отправилось в %s: %s", chat_id, exc)
+        return None
+
+
 def send_message(chat_id: str | int, text: str, *, keyboard: list | None = None,
                  silent: bool = False, preview: bool = False) -> dict | None:
     if cfg.dry_run():
@@ -66,6 +75,15 @@ def answer_callback(callback_id: str, text: str = "") -> None:
         call("answerCallbackQuery", {"callback_query_id": callback_id, "text": text[:180]})
     except TelegramError as exc:
         log.warning("answerCallbackQuery: %s", exc)
+
+
+def chat_title(chat_id: str | int) -> str:
+    """Проверка канала: имя, если бот в нём есть, иначе текст ошибки."""
+    try:
+        chat = call("getChat", {"chat_id": chat_id})
+    except TelegramError as exc:
+        return f"ОШИБКА — {exc}"
+    return f"{chat.get('title') or chat.get('username') or chat.get('id')} ({chat.get('type')})"
 
 
 def get_updates(offset: int | None = None, timeout: int = 0) -> list[dict]:

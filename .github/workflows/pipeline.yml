@@ -2,8 +2,11 @@ name: pipeline
 
 on:
   schedule:
-    # каждые 10 минут; GitHub иногда задерживает запуск — окно догона в config.yaml это учитывает
-    - cron: "*/10 * * * *"
+    # смена работает 5,5 часов и всё это время тикает сама;
+    # частый cron GitHub душит, поэтому запусков в сутки немного, а покрытие сплошное
+    - cron: "5 */5 * * *"
+    # подстраховка: если смена не стартовала, одиночный тик всё равно пройдёт
+    - cron: "35 */2 * * *"
   workflow_dispatch:
     inputs:
       command:
@@ -11,7 +14,7 @@ on:
         required: true
         default: tick
         type: choice
-        options: [tick, collect, check-sources, digest, french, urgent, weekly, filter-report, stats]
+        options: [tick, serve, collect, check-sources, check-channels, digest, french, urgent, weekly, filter-report, stats]
       channel:
         description: "Канал для digest"
         required: false
@@ -26,7 +29,7 @@ concurrency:
 jobs:
   run:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 350
     steps:
       - uses: actions/checkout@v4
 
@@ -36,6 +39,17 @@ jobs:
           cache: pip
 
       - run: pip install -r requirements.txt
+
+      - name: Выбор режима
+        id: mode
+        run: |
+          if [ "${{ github.event_name }}" = "schedule" ] && [ "${{ github.event.schedule }}" = "5 */5 * * *" ]; then
+            echo "command=serve" >> $GITHUB_OUTPUT
+          elif [ "${{ github.event_name }}" = "schedule" ]; then
+            echo "command=tick" >> $GITHUB_OUTPUT
+          else
+            echo "command=${{ github.event.inputs.command }}" >> $GITHUB_OUTPUT
+          fi
 
       - name: Запуск
         env:
@@ -49,5 +63,6 @@ jobs:
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           LLM_PROVIDER: ${{ vars.LLM_PROVIDER || 'groq' }}
         run: |
-          python -m news.cli ${{ github.event.inputs.command || 'tick' }} \
-            --channel ${{ github.event.inputs.channel || 'A' }}
+          python -m news.cli ${{ steps.mode.outputs.command }} \
+            --channel ${{ github.event.inputs.channel || 'A' }} \
+            --interval 300 --minutes 320

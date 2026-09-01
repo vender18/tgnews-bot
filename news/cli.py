@@ -5,8 +5,9 @@ import argparse
 import json
 import logging
 import sys
+import time
 
-from . import collect, french, pipeline, publish, reports, telegram, util
+from . import collect, config as cfg, french, pipeline, publish, reports, telegram, util
 from .db import get_db
 from .llm import LLM
 
@@ -36,9 +37,13 @@ def print_check_report(report: list[dict]) -> None:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="news", description="Персональный новостной агрегатор")
     parser.add_argument("command", choices=[
-        "tick", "collect", "dedup", "score", "digest", "urgent", "french",
-        "check-sources", "weekly", "filter-report", "stats", "migrate",
+        "tick", "serve", "collect", "dedup", "score", "digest", "urgent", "french",
+        "check-sources", "check-channels", "weekly", "filter-report", "stats", "migrate",
     ])
+    parser.add_argument("--interval", type=int, default=300,
+                        help="пауза между тиками в режиме serve, секунды")
+    parser.add_argument("--minutes", type=int, default=330,
+                        help="сколько минут работает смена в режиме serve")
     parser.add_argument("--channel", default="A", choices=["A", "B", "C"])
     parser.add_argument("--force", action="store_true", help="игнорировать интервалы и лимиты")
     parser.add_argument("--verbose", "-v", action="store_true")
@@ -55,6 +60,39 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "tick":
         stats = pipeline.tick(db, llm)
         print(json.dumps(stats, ensure_ascii=False, indent=2, default=str))
+        return 0
+
+    if args.command == "serve":
+        # запуск по расписанию GitHub приходит нерегулярно, поэтому один прогон
+        # работает сменой: тикает сам, пока не выйдет отведённое время
+        deadline = time.monotonic() + args.minutes * 60
+        ticks = 0
+        while time.monotonic() < deadline:
+            started = time.monotonic()
+            try:
+                stats = pipeline.tick(db, LLM(db))
+                ticks += 1
+                logging.getLogger("serve").info(
+                    "тик %s: %s", ticks,
+                    json.dumps(stats.get("timings", {}), ensure_ascii=False))
+            except Exception as exc:  # noqa: BLE001 — смена не должна обрываться
+                logging.getLogger("serve").exception("тик упал: %s", exc)
+            pause = max(30.0, args.interval - (time.monotonic() - started))
+            if time.monotonic() + pause > deadline:
+                break
+            time.sleep(pause)
+        print(json.dumps({"ticks": ticks}, ensure_ascii=False))
+        return 0
+
+    if args.command == "check-channels":
+        for channel in ("A", "B", "C"):
+            chat_id = cfg.channel_chat_id(channel)
+            if not chat_id:
+                print(f"{channel}: не задан TG_CHANNEL_{channel}")
+                continue
+            print(f"{channel} ({chat_id}): {telegram.chat_title(chat_id)}")
+        owner = cfg.owner_chat_id()
+        print(f"владелец ({owner}): {telegram.chat_title(owner) if owner else 'не задан'}")
         return 0
 
     if args.command == "collect":

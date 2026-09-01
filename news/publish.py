@@ -287,7 +287,7 @@ def publish_digest(db: DB, llm: LLM, channel: str, slot: str | None = None,
 
     text = "\n".join(blocks).strip()
     silent = quiet_now(db)
-    message = telegram.send_message(chat_id, text, silent=silent)
+    message = telegram.try_send(chat_id, text, silent=silent)
     message_id = message.get("message_id") if message else None
 
     _mark_published(db, used, "digest")
@@ -353,7 +353,7 @@ def publish_urgent(db: DB, llm: LLM) -> dict:
                 + (f" · <a href=\"{util.esc(url)}\">открыть</a>" if url else "")
                 + "</i>"
             )
-            message = telegram.send_message(chat_id, text)
+            message = telegram.try_send(chat_id, text)
             message_id = message.get("message_id") if message else None
             db.execute("UPDATE clusters SET headline = ?, summary = ?, urgent = 1 WHERE id = ?",
                        (headline, summary, cluster["id"]))

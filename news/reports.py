@@ -46,7 +46,7 @@ def weekly_review(db: DB, llm: LLM) -> dict:
     chat_id = cfg.channel_chat_id("A")
     if not chat_id:
         return {"published": 0, "reason": "не задан TG_CHANNEL_A"}
-    message = telegram.send_message(chat_id, text)
+    message = telegram.try_send(chat_id, text)
     db.execute(
         "INSERT INTO publications (channel, kind, slot, message_id, cluster_ids, created_at) "
         "VALUES (?,?,?,?,?,?)",

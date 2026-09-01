@@ -104,6 +104,9 @@ def tick(db: DB, llm: LLM, *, collect_only: bool = False) -> dict:
         started = time.monotonic()
         try:
             return fn()
+        except Exception as exc:  # noqa: BLE001 — сбой этапа не отменяет остальные
+            log.exception("этап %s упал: %s", name, exc)
+            return {"error": f"{type(exc).__name__}: {exc}"}
         finally:
             timings[name] = round(time.monotonic() - started, 1)
             log.info("этап %s: %.1f с", name, timings[name])
