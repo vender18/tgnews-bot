@@ -95,10 +95,16 @@ def compiled_filters() -> dict[str, list[re.Pattern[str]]]:
 # --- окружение -------------------------------------------------------------
 
 def env(name: str, default: str | None = None) -> str | None:
+    """Значение переменной без пробелов по краям.
+
+    При копировании id канала в секрет легко захватить пробел или перевод
+    строки — телеграм на таком отвечает «chat not found».
+    """
     value = os.environ.get(name)
-    if value is None or value == "":
+    if value is None:
         return default
-    return value
+    value = value.strip().strip('"').strip("'").strip()
+    return value or default
 
 
 def require_env(name: str) -> str:
