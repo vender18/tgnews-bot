@@ -309,11 +309,15 @@ def handle_callback(db: DB, callback: dict) -> None:
     telegram.answer_callback(callback["id"])
 
 
-def poll(db: DB, llm: LLM) -> dict:
-    """Забирает накопившиеся апдейты. Вызывается каждым тиком конвейера."""
+def poll(db: DB, llm: LLM, timeout: int = 0) -> dict:
+    """Забирает апдейты.
+
+    timeout > 0 — длинное ожидание: телеграм отдаёт нажатие сразу, как оно
+    случилось, поэтому 👍 под постом отрабатывает мгновенно, а не через тик.
+    """
     offset = db.kv_get("tg_offset", 0)
     try:
-        updates = telegram.get_updates(offset=offset or None)
+        updates = telegram.get_updates(offset=offset or None, timeout=timeout)
     except telegram.TelegramError as exc:
         log.warning("getUpdates: %s", exc)
         return {"updates": 0}

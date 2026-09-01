@@ -7,7 +7,7 @@ import logging
 import sys
 import time
 
-from . import collect, config as cfg, french, pipeline, publish, reports, telegram, util
+from . import collect, commands, config as cfg, french, pipeline, publish, reports, telegram, util
 from .db import get_db
 from .llm import LLM
 
@@ -65,22 +65,31 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "serve":
         # запуск по расписанию GitHub приходит нерегулярно, поэтому один прогон
         # работает сменой: тикает сам, пока не выйдет отведённое время
+        log = logging.getLogger("serve")
         deadline = time.monotonic() + args.minutes * 60
         ticks = 0
+        next_tick = time.monotonic()
         while time.monotonic() < deadline:
-            started = time.monotonic()
-            try:
-                stats = pipeline.tick(db, LLM(db))
-                ticks += 1
-                logging.getLogger("serve").info(
-                    "тик %s: %s", ticks,
-                    json.dumps(stats.get("timings", {}), ensure_ascii=False))
-            except Exception as exc:  # noqa: BLE001 — смена не должна обрываться
-                logging.getLogger("serve").exception("тик упал: %s", exc)
-            pause = max(30.0, args.interval - (time.monotonic() - started))
-            if time.monotonic() + pause > deadline:
+            if time.monotonic() >= next_tick:
+                try:
+                    stats = pipeline.tick(db, LLM(db))
+                    ticks += 1
+                    log.info("тик %s: %s", ticks,
+                             json.dumps(stats.get("timings", {}), ensure_ascii=False))
+                except Exception as exc:  # noqa: BLE001 — смена не должна обрываться
+                    log.exception("тик упал: %s", exc)
+                next_tick = time.monotonic() + args.interval
+
+            # между тиками висим на длинном запросе: нажатия и команды
+            # отрабатывают сразу, а не ждут следующего тика
+            wait = int(min(25, max(1, next_tick - time.monotonic(), 1)))
+            if time.monotonic() + wait > deadline:
                 break
-            time.sleep(pause)
+            try:
+                commands.poll(db, llm, timeout=wait)
+            except Exception as exc:  # noqa: BLE001
+                log.warning("опрос апдейтов не удался: %s", exc)
+                time.sleep(wait)
         print(json.dumps({"ticks": ticks}, ensure_ascii=False))
         return 0
 
