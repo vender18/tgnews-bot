@@ -79,7 +79,11 @@ def run_schedule(db: DB, llm: LLM) -> dict:
             log.exception("слот %s упал: %s", key, exc)
             results[key] = {"error": str(exc)}
             telegram.notify_owner(f"Слот {key} упал: {util.esc(str(exc)[:200])}", silent=True)
-        db.mark_slot(key, util.now_iso())
+        # упавший слот не закрываем: пока не вышло окно догона, следующий тик повторит,
+        # иначе выпуск теряется молча
+        outcome = results.get(key)
+        if not (isinstance(outcome, dict) and outcome.get("error")):
+            db.mark_slot(key, util.now_iso())
     return results
 
 
