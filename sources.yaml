@@ -218,6 +218,125 @@ sources:
     publisher: "Deutsche Welle"
     tags: [world, foreign]
 
+  # --- оперативные телеграм-ленты: они дают скорость, RSS даёт подтверждение ---
+  - id: tg_bbbreaking
+    type: telegram_web
+    handle: "bbbreaking"
+    channel: A
+    weight: 0.7
+    lang: ru
+    publisher: "Раньше всех"
+    tags: [breaking]
+
+  - id: tg_tass
+    type: telegram_web
+    handle: "tass_agency"
+    channel: A
+    weight: 0.9
+    lang: ru
+    publisher: "ТАСС"
+    tags: [agency, breaking]
+
+  - id: tg_interfax
+    type: telegram_web
+    handle: "interfaxonline"
+    channel: A
+    weight: 0.9
+    lang: ru
+    publisher: "Интерфакс"
+    tags: [agency, breaking]
+
+  - id: tg_rbc
+    type: telegram_web
+    handle: "rbc_news"
+    channel: A
+    weight: 0.85
+    lang: ru
+    publisher: "РБК"
+    tags: [economics, breaking]
+
+  - id: tg_forbes
+    type: telegram_web
+    handle: "forbesrussia"
+    channel: A
+    weight: 0.75
+    lang: ru
+    publisher: "Forbes"
+    tags: [business]
+
+  - id: tg_readovka
+    type: telegram_web
+    handle: "readovkanews"
+    channel: A
+    weight: 0.6
+    lang: ru
+    publisher: "Readovka"
+    tags: [breaking]
+
+  - id: tg_ostorozhno
+    type: telegram_web
+    handle: "ostorozhno_novosti"
+    channel: A
+    weight: 0.6
+    lang: ru
+    publisher: "Осторожно, новости"
+    tags: [breaking]
+
+  - id: tg_varlamov
+    type: telegram_web
+    handle: "varlamov_news"
+    channel: A
+    weight: 0.6
+    lang: ru
+    publisher: "Varlamov News"
+    tags: [general]
+
+  - id: tg_shot
+    type: telegram_web
+    handle: "shot_shot"
+    channel: A
+    weight: 0.55
+    lang: ru
+    publisher: "SHOT"
+    tags: [breaking, incidents]
+
+  - id: tg_topor
+    type: telegram_web
+    handle: "toporlive"
+    channel: A
+    weight: 0.6
+    lang: ru
+    publisher: "Топор Live"
+    tags: [breaking]
+
+  - id: tg_bfm
+    type: telegram_web
+    handle: "bfmnews"
+    channel: A
+    weight: 0.6
+    lang: ru
+    publisher: "BFM"
+    tags: [economics]
+
+  - id: tg_if_market
+    type: telegram_web
+    handle: "if_market_news"
+    channel: A
+    weight: 0.55
+    lang: ru
+    publisher: "InvestFuture"
+    tags: [economics, markets]
+
+  - id: tg_meduza
+    type: telegram_web
+    handle: "meduzalive"
+    channel: A
+    weight: 0.6
+    lang: ru
+    foreign: true
+    publisher: "Медуза"
+    tags: [world, foreign]
+
   # ============ КАНАЛ B — Москва и Краснодар ============
 
   - id: mos_ru
@@ -247,6 +366,15 @@ sources:
     lang: ru
     geo: [moscow]
     publisher: "Агентство Москва"
+
+  - id: tg_moscowach
+    type: telegram_web
+    handle: "moscowach"
+    channel: B
+    weight: 0.6
+    lang: ru
+    geo: [moscow]
+    publisher: "Москва Live"
 
   - id: gnews_moscow_incidents
     type: gnews

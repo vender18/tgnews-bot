@@ -25,7 +25,7 @@ os.environ["TG_BOT_TOKEN"] = "test:token"
 
 from news import commands, dedup, filters, french, publish, score, util  # noqa: E402
 from news.config import Source, config, sources  # noqa: E402
-from news.db import DB, dumps  # noqa: E402
+from news.db import DB, dumps, loads  # noqa: E402
 from news.llm import LLM, parse_json  # noqa: E402
 
 PASSED: list[str] = []
@@ -256,10 +256,12 @@ def test_quiet_hours(db: DB) -> None:
     db.kv_set("quiet_hours", {"start": "00:00", "end": "23:59", "disabled": False})
     check("тихие часы включаются", publish.quiet_now(db))
     db.execute("UPDATE clusters SET status = 'scored', published_at = NULL, score = 95, "
-               "source_count = 2")
+               "source_count = 2, channel = 'A'")
     llm = FakeLLM(db, {})
-    stats = publish.publish_urgent(db, llm)
-    check("срочное ночью уходит в очередь", stats.get("queued", 0) >= 1, str(stats))
+    stats = publish.publish_stream(db, llm, "A")
+    queued = int(db.scalar("SELECT COUNT(*) AS c FROM clusters WHERE status = 'queued'", (), 0))
+    check("ночью лента копит, а не публикует",
+          stats.get("published", 0) == 0 and queued >= 1, f"{stats}, в очереди {queued}")
     db.kv_set("quiet_hours", {"start": "23:00", "end": "07:30", "disabled": True})
     check("тихие часы выключаются", not publish.quiet_now(db))
 
@@ -331,19 +333,65 @@ def test_schedule(db: DB) -> None:
     util.now_msk = lambda: fixed  # type: ignore[assignment]
     try:
         due = {kind for kind, _key in pipeline._due_slots(db, fixed)}
-        check("слот 20:00 канала A наступил", "A" in due, str(due))
+        check("слот канала B наступил", "B" in due, str(due))
         llm = FakeLLM(db, {})
         pipeline.run_schedule(db, llm)
         due_after = {kind for kind, _key in pipeline._due_slots(db, fixed)}
-        check("отработанный слот не повторяется", "A" not in due_after, str(due_after))
+        check("отработанный слот не повторяется", "B" not in due_after, str(due_after))
 
         late = fixed.replace(hour=23, minute=50)
         due_late = {kind for kind, _key in pipeline._due_slots(db, late)}
-        check("просроченный слот не догоняется через три часа", "B" not in due_late, str(due_late))
+        check("просроченный слот не догоняется через три часа", "C" not in due_late, str(due_late))
     finally:
         util.now_msk = original  # type: ignore[assignment]
 
     check("очистка старых данных проходит", pipeline.retention(db).get("cleaned") is True)
+
+
+def test_stream(db: DB) -> None:
+    """Лента канала A: событие уходит отдельным постом, как только дозрело."""
+    db.execute("DELETE FROM posts")
+    db.execute("DELETE FROM clusters")
+    db.execute("DELETE FROM publications")
+    db.kv_set("quiet_hours", {"start": "23:00", "end": "07:30", "disabled": True})
+
+    # подтверждённое событие часовой давности
+    make_post(db, "interfax", "ЦБ поднял ключевую ставку до 18% годовых",
+              "Банк России повысил ключевую ставку до 18 процентов годовых", hours_ago=1)
+    make_post(db, "tass", "Банк России поднял ставку до 18 процентов",
+              "Регулятор поднял ключевую ставку, решение вступает в силу в понедельник",
+              hours_ago=1)
+    # одинокая заметка слабого источника — в ленту не должна попасть
+    make_post(db, "lenta", "Блогер рассказал о новом сериале",
+              "Известный блогер поделился впечатлениями от нового сериала стриминга",
+              hours_ago=1)
+    # свежее событие, ещё не дозревшее
+    make_post(db, "interfax", "Совет директоров Аэрофлота обсудит дивиденды",
+              "Заседание совета директоров назначено на следующей неделе", hours_ago=0.01)
+
+    llm = FakeLLM(db, {
+        "summary": [{"i": i, "headline": f"Заголовок {i}", "summary": "Суть события."}
+                    for i in range(1, 9)],
+    })
+    dedup.run(db, llm)
+    score.run(db, llm)
+    result = publish.publish_stream(db, llm, "A")
+    check("лента публикует дозревшее событие", result.get("published", 0) >= 1, str(result))
+
+    kinds = db.query("SELECT kind, cluster_ids FROM publications")
+    check("в ленте один пост на событие",
+          all(k["kind"] == "stream" and len(loads(k["cluster_ids"], [])) == 1 for k in kinds),
+          str(kinds))
+
+    titles = [r["title"] or "" for r in db.query(
+        "SELECT title FROM clusters WHERE status = 'published'")]
+    check("одинокая заметка слабого источника в ленту не идёт",
+          not any("блогер" in t.lower() for t in titles), str(titles))
+    check("сырое событие ждёт подтверждения",
+          not any("Аэрофлот" in t for t in titles), str(titles))
+
+    again = publish.publish_stream(db, llm, "A")
+    check("опубликованное не повторяется", again.get("published", 0) == 0, str(again))
 
 
 def main() -> int:
@@ -359,6 +407,7 @@ def main() -> int:
     test_limits(db)
     test_commands(db)
     test_french(db)
+    test_stream(db)
     test_schedule(db)
 
     print(f"\nпройдено: {len(PASSED)}")

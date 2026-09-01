@@ -4,11 +4,11 @@ from __future__ import annotations
 import logging
 
 from . import config as cfg
-from . import extract, telegram, util
+from . import extract, filters, telegram, util
 from .collect import effective_weight, reset_weight_cache
 from .config import config, source as get_source
-from .db import DB, dumps
-from .dedup import cluster_posts, independent_sources
+from .db import DB, dumps, loads
+from .dedup import cluster_posts, independent_sources, posts_of
 from .llm import LLM
 
 log = logging.getLogger("publish")
@@ -297,6 +297,193 @@ def publish_digest(db: DB, llm: LLM, channel: str, slot: str | None = None,
     return {"published": len(used), "message_id": message_id, "clusters": used}
 
 
+
+
+# --- лента: канал публикует событие сразу, а не ждёт дайджеста -------------
+
+def stream_channels() -> list[str]:
+    conf = config().get("stream", {})
+    return list(conf.get("channels", [])) if conf.get("enabled") else []
+
+
+def _ready_for_stream(db: DB, cluster: dict, posts: list[dict], conf: dict) -> bool:
+    """Событие созрело: есть подтверждение или вес, и прошло время на склейку."""
+    blob = " ".join(filter(None, [cluster.get("title") or ""] +
+                           [p.get("title") or "" for p in posts[:4]]))
+    hard = bool(filters.hard_triggers(blob))
+    weights = [effective_weight(db, get_source(p["source_id"]))
+               for p in posts if get_source(p["source_id"])]
+    top_weight = max(weights) if weights else 0.5
+    count = int(cluster.get("source_count") or 1)
+
+    # одинокая заметка из слабого источника в ленту не идёт
+    if count < 2 and top_weight < 0.85 and not hard:
+        return False
+
+    hold = conf["fast_hold_minutes"] if hard else conf["hold_minutes"]
+    first_seen = util.parse_dt(cluster.get("first_seen_at")) or util.now_utc()
+    age_minutes = (util.now_utc() - first_seen).total_seconds() / 60
+    return age_minutes >= hold
+
+
+def format_stream_item(db: DB, cluster: dict, posts: list[dict],
+                       headline: str, summary: str) -> str:
+    conf = config()["stream"]
+    score = float(cluster.get("score") or 0)
+    mark = "⚡️ " if score >= conf["urgent_mark_score"] or cluster.get("urgent") else ""
+    lines = [f"{mark}<b>{util.esc(util.shorten(headline, 160))}</b>"]
+    if summary and util.jaccard(set(util.tokens(headline)), set(util.tokens(summary))) <= 0.75:
+        lines += ["", util.esc(summary)]
+    note = _divergence_note(posts, int(cluster.get("divergence") or 0))
+    if note:
+        lines.append(note.strip())
+    url = _link(db, posts)
+    tail = _sources_line(posts)
+    if url:
+        tail += f" · <a href=\"{util.esc(url)}\">источник</a>"
+    lines += ["", f"<i>{tail}</i>"]
+    return "\n".join(lines)
+
+
+def _already_out(db: DB, channel: str, candidates: list[tuple[dict, list[dict]]],
+                 llm: LLM) -> set[int]:
+    """Что из кандидатов повторяет уже вышедшее.
+
+    В ленте повтор заметнее, чем в дайджесте: одно событие приходит волнами
+    и формулировками, которые склейка не всегда ловит.
+    """
+    if not candidates:
+        return set()
+    recent = db.query(
+        """SELECT id, title, headline, entities FROM clusters
+           WHERE channel = ? AND published_at >= ?
+           ORDER BY published_at DESC LIMIT 25""",
+        (channel, util.ago_iso(hours=14)),
+    )
+    if not recent:
+        return set()
+
+    duplicates: set[int] = set()
+    unresolved: list[tuple[dict, list[dict]]] = []
+    for cluster, posts in candidates:
+        ents = set(loads(cluster.get("entities"), []) or [])
+        tokens = set(util.tokens(cluster.get("title") or ""))
+        hit = False
+        for row in recent:
+            other_tokens = set(util.tokens(row.get("headline") or row.get("title") or ""))
+            other_ents = set(loads(row.get("entities"), []) or [])
+            if util.jaccard(tokens, other_tokens) >= 0.6:
+                hit = True
+                break
+            if len(ents & other_ents) >= 3 and util.jaccard(ents, other_ents) >= 0.4:
+                hit = True
+                break
+        if hit:
+            duplicates.add(int(cluster["id"]))
+        else:
+            unresolved.append((cluster, posts))
+
+    if unresolved and llm.available:
+        published_titles = [util.shorten(r.get("headline") or r.get("title") or "", 120)
+                            for r in recent[:12]]
+        lines = [f"{i}. {util.shorten(c.get('title') or '', 140)}"
+                 for i, (c, _p) in enumerate(unresolved, start=1)]
+        prompt = (
+            "Уже опубликованы новости:\n"
+            + "\n".join(f"- {t}" for t in published_titles)
+            + "\n\nНовые сообщения:\n" + "\n".join(lines)
+            + "\n\nДля каждого нового сообщения определи, рассказывает ли оно о том же "
+              "событии, что одна из уже опубликованных новостей.\n"
+              'Ответь только JSON: [{"i": 1, "dup": true}, {"i": 2, "dup": false}]'
+        )
+        data = llm.ask_json(prompt, purpose="dedup", max_tokens=500)
+        if isinstance(data, list):
+            for item in data:
+                try:
+                    index = int(item["i"]) - 1
+                    if 0 <= index < len(unresolved) and bool(item.get("dup")):
+                        duplicates.add(int(unresolved[index][0]["id"]))
+                except (KeyError, TypeError, ValueError):
+                    continue
+    return duplicates
+
+
+def publish_stream(db: DB, llm: LLM, channel: str = "A") -> dict:
+    conf = config().get("stream", {})
+    if channel not in stream_channels():
+        return {"published": 0, "reason": "лента выключена"}
+
+    chat_id = cfg.channel_chat_id(channel)
+    if not chat_id:
+        return {"published": 0, "reason": f"не задан TG_CHANNEL_{channel}"}
+
+    if quiet_now(db):
+        # ночью копим: утренний выпуск очереди отдаст накопленное
+        db.execute(
+            """UPDATE clusters SET status = 'queued'
+               WHERE channel = ? AND status = 'scored' AND score >= ? AND updated_at >= ?""",
+            (channel, conf["threshold"], util.ago_iso(hours=8)),
+        )
+        return {"published": 0, "reason": "тихие часы"}
+
+    room = int(conf["max_per_day"]) - published_last_day(db, channel)
+    if room <= 0:
+        return {"published": 0, "reason": "дневной лимит ленты исчерпан"}
+
+    candidates = db.query(
+        """SELECT * FROM clusters
+           WHERE channel = ? AND status IN ('scored', 'queued')
+             AND score >= ? AND updated_at >= ?
+           ORDER BY score DESC LIMIT 30""",
+        (channel, conf["threshold"], util.ago_iso(hours=8)),
+    )
+    grouped = posts_of(db, [int(c["id"]) for c in candidates])
+
+    ready: list[tuple[dict, list[dict]]] = []
+    for cluster in candidates:
+        posts = grouped.get(int(cluster["id"])) or []
+        if posts and _ready_for_stream(db, cluster, posts, conf):
+            ready.append((cluster, posts))
+        if len(ready) >= min(int(conf["max_per_tick"]), room):
+            break
+
+    if not ready:
+        return {"published": 0, "reason": "нечего публиковать"}
+
+    duplicates = _already_out(db, channel, ready, llm)
+    if duplicates:
+        db.execute_many(
+            "UPDATE clusters SET status = 'dropped', drop_reason = 'уже выходило' WHERE id = ?",
+            [(cid,) for cid in duplicates])
+        ready = [item for item in ready if int(item[0]["id"]) not in duplicates]
+    if not ready:
+        return {"published": 0, "reason": "всё уже выходило", "dropped": len(duplicates)}
+
+    # в ленте порядок хронологический, а не по важности
+    ready.sort(key=lambda item: item[0].get("first_seen_at") or "")
+    extract.enrich(db, [posts[0] for _cluster, posts in ready], budget=4)
+    ready = [(cluster, cluster_posts(db, cluster["id"])) for cluster, _ in ready]
+
+    summaries = summarize_batch(db, llm, ready)
+    published: list[int] = []
+    for cluster, posts in ready:
+        headline, summary = summaries.get(int(cluster["id"]), ("", ""))
+        if not headline:
+            continue
+        text = format_stream_item(db, cluster, posts, headline, summary)
+        message = telegram.try_send(chat_id, text)
+        message_id = message.get("message_id") if message else None
+        db.execute("UPDATE clusters SET headline = ?, summary = ? WHERE id = ?",
+                   (headline, summary, cluster["id"]))
+        _mark_published(db, [int(cluster["id"])], "stream")
+        _record_publication(db, channel, "stream", None, message_id, [int(cluster["id"])])
+        if message_id:
+            telegram.edit_markup(chat_id, message_id, vote_keyboard(int(cluster["id"]), 1))
+        published.append(int(cluster["id"]))
+
+    return {"published": len(published), "clusters": published}
+
+
 def publish_urgent(db: DB, llm: LLM) -> dict:
     """Экстренная полоса: высокий скор, минимум два независимых источника, лимит в сутки."""
     conf = config()["score"]
@@ -305,8 +492,8 @@ def publish_urgent(db: DB, llm: LLM) -> dict:
 
     for channel in ("A", "B"):
         allowed = limits.get(channel, 0)
-        if allowed <= 0:
-            continue
+        if allowed <= 0 or channel in stream_channels():
+            continue  # в ленте срочное и так выходит первым
         already = published_last_day(db, channel, kind="urgent")
         candidates = db.query(
             """SELECT * FROM clusters
@@ -368,18 +555,21 @@ def publish_urgent(db: DB, llm: LLM) -> dict:
 
 
 def release_queue(db: DB, llm: LLM) -> dict:
-    """После тихих часов отдаём накопленное экстренное — одним постом, без шума."""
+    """После тихих часов отдаём накопленное: лента — постами, остальные — дайджестом."""
     if quiet_now(db):
         return {"published": 0}
+    total = 0
+    for channel in stream_channels():
+        result = publish_stream(db, llm, channel)
+        total += result.get("published", 0)
     queued = db.query(
         "SELECT * FROM clusters WHERE status = 'queued' AND updated_at >= ? "
         "ORDER BY score DESC LIMIT 10",
         (util.ago_iso(hours=14),),
     )
     if not queued:
-        return {"published": 0}
-    total = 0
-    for channel in ("A", "B", "C"):
+        return {"published": total}
+    for channel in ("B", "C"):
         part = [c for c in queued if c["channel"] == channel]
         if not part:
             continue

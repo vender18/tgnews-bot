@@ -121,6 +121,7 @@ def tick(db: DB, llm: LLM, *, collect_only: bool = False) -> dict:
         return stats
     stats["dedup"] = stage("dedup", lambda: dedup.run(db, llm))
     stats["score"] = stage("score", lambda: score.run(db, llm))
+    stats["stream"] = stage("stream", lambda: publish.publish_stream(db, llm, "A"))
     stats["urgent"] = stage("urgent", lambda: publish.publish_urgent(db, llm))
     stats["schedule"] = stage("schedule", lambda: run_schedule(db, llm))
     stats["commands"] = stage("commands", lambda: commands.poll(db, llm))
